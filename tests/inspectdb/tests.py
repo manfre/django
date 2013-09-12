@@ -73,6 +73,10 @@ class InspectDBTestCase(TestCase):
         assertFieldType = self.make_field_type_asserter()
 
         assertFieldType('id', "models.IntegerField(primary_key=True)")
+
+        if not connection.features.can_introspect_autofield:
+            assertFieldType('id', "models.IntegerField(primary_key=True) # AutoField?")
+
         assertFieldType('big_int_field', "models.BigIntegerField()")
         if connection.vendor == 'mysql':
             # No native boolean type on MySQL
