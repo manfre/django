@@ -125,7 +125,6 @@ class ManyToOneRegressionTests(TestCase):
 
     def test_related_null_to_field(self):
         c1 = Car.objects.create()
-        c2 = Car.objects.create()
         d1 = Driver.objects.create()
         self.assertIs(d1.car, None)
         with self.assertNumQueries(0):
