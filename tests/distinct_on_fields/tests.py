@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+from django.db import connection
 from django.db.models import Max
 from django.test import TestCase, skipUnlessDBFeature
 from django.test.utils import str_prefix
@@ -8,6 +9,10 @@ from .models import Tag, Celebrity, Fan, Staff, StaffTag
 
 class DistinctOnTests(TestCase):
     def setUp(self):
+        if not connection.features.can_distinct_on_fields:
+            # No tests will run. This skips the setUp that breaks mssql due to
+            # non-unique nulls
+            return
         t1 = Tag.objects.create(name='t1')
         t2 = Tag.objects.create(name='t2', parent=t1)
         t3 = Tag.objects.create(name='t3', parent=t1)
