@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 
-from django.test import TestCase
+from django.test import TestCase, skipUnlessDBFeature
 
 from .models import Place, Restaurant, Bar, Favorites, Target, UndergroundBar
 
@@ -225,6 +225,16 @@ class OneToOneRegressionTests(TestCase):
             with self.assertRaises(UndergroundBar.DoesNotExist):
                 p.undergroundbar
 
+    @skipUnlessDBFeature('ignores_nulls_in_unique_constraints')
+    def test_get_reverse_on_unsaved_object_multiple(self):
+        """
+        Regression for #18153 and #19089.
+
+        Accessing the reverse relation on an unsaved object
+        always raises an exception.
+        """
+        p = Place()
+        UndergroundBar.objects.create()
         UndergroundBar.objects.create()
 
         # When there are several instances of the origin
