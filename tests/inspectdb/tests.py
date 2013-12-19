@@ -99,11 +99,12 @@ class InspectDBTestCase(TestCase):
         else:
             # 'unsigned' property undetected on other backends
             assertFieldType('pos_int_field', "models.IntegerField()")
-            if connection.vendor == 'postgresql':
+            if connection.vendor in ['postgresql', 'microsoft']:
                 assertFieldType('pos_small_int_field', "models.SmallIntegerField()")
             else:
                 assertFieldType('pos_small_int_field', "models.IntegerField()")
-        if connection.vendor in ('sqlite', 'postgresql'):
+        assertFieldType('slug_field', "models.CharField(max_length=50)")
+        if connection.vendor in ('sqlite', 'postgresql', 'microsoft'):
             assertFieldType('small_int_field', "models.SmallIntegerField()")
         else:
             assertFieldType('small_int_field', "models.IntegerField()")
