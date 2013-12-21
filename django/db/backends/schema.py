@@ -336,6 +336,17 @@ class BaseDatabaseSchemaEditor(object):
             "new_tablespace": self.quote_name(new_db_tablespace),
         })
 
+    def rename_db_column(self, model, old_db_column, new_db_column, new_type):
+        """
+        Renames a column on a table.
+        """
+        self.execute(self.sql_rename_column % {
+            "table": self.quote_name(model._meta.db_table),
+            "old_column": self.quote_name(old_db_column),
+            "new_column": self.quote_name(new_db_column),
+            "type": new_type,
+        })
+
     def delete_db_column(self, model, column):
         """
         Delete a column from the model's table.
@@ -529,12 +540,7 @@ class BaseDatabaseSchemaEditor(object):
                 )
         # Have they renamed the column?
         if old_field.column != new_field.column:
-            self.execute(self.sql_rename_column % {
-                "table": self.quote_name(model._meta.db_table),
-                "old_column": self.quote_name(old_field.column),
-                "new_column": self.quote_name(new_field.column),
-                "type": new_type,
-            })
+            self.rename_db_column(model, old_field.column, new_field.column, new_type)
         # Next, start accumulating actions to do
         actions = []
         post_actions = []
