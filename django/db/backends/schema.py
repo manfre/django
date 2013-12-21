@@ -336,6 +336,17 @@ class BaseDatabaseSchemaEditor(object):
             "new_tablespace": self.quote_name(new_db_tablespace),
         })
 
+    def delete_db_column(self, model, column):
+        """
+        Delete a column from the model's table.
+        """
+        # Delete the column
+        sql = self.sql_delete_column % {
+            "table": self.quote_name(model._meta.db_table),
+            "column": self.quote_name(column),
+        }
+        self.execute(sql)
+
     def add_field(self, model, field):
         """
         Creates a field on a model.
@@ -413,14 +424,7 @@ class BaseDatabaseSchemaEditor(object):
         # It might not actually have a column behind it
         if field.db_parameters(connection=self.connection)['type'] is None:
             return
-        # Get the column's definition
-        definition, params = self.column_sql(model, field)
-        # Delete the column
-        sql = self.sql_delete_column % {
-            "table": self.quote_name(model._meta.db_table),
-            "column": self.quote_name(field.column),
-        }
-        self.execute(sql)
+        self.delete_db_column(model, field.column)
         # Reset connection if required
         if self.connection.features.connection_persists_old_columns:
             self.connection.close()
