@@ -67,8 +67,8 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         # Rename the new to the old
         self.alter_db_table(model, temp_model._meta.db_table, model._meta.db_table)
         # Run deferred SQL on correct table
-        for sql in self.deferred_sql:
-            self.execute(sql.replace(temp_model._meta.db_table, model._meta.db_table))
+        for sql, params in self.deferred_sql:
+            self.execute(sql.replace(temp_model._meta.db_table, model._meta.db_table), params)
         self.deferred_sql = []
         # Fix any PK-removed field
         if restore_pk_field:

@@ -105,3 +105,12 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         else:
             return str(value)
 
+    def _create_constraint_name(self, model, column_names, constraint_type='', suffix=""):
+        name = super(DatabaseSchemaEditor, self)._create_constraint_name(model, column_names, constraint_type, suffix)
+        # It shouldn't start with an underscore (Oracle hates this)
+        if name[0] == "_":
+            name = name[1:]
+        # It can't start with a number on Oracle, so prepend D if we need to
+        if name[0].isdigit():
+            name = "D%s" % name[:-1]
+        return name
