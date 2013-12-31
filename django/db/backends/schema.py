@@ -364,10 +364,19 @@ class BaseDatabaseSchemaEditor(object):
 
     def _alter_db_column_sql(self, model, column, alteration=None, values={}, fragment=False, params=None):
         """
-        Return a tuple containing (sql, params) that represents the SQL to do
-        the requested alteration. When fragment is True, the SQL wil only
-        include the column specific portion of the SQL that can be combined with
-        other column alterations.
+        Returns a pair of lists representing combinable SQL fragments and
+        non-combinable full SQL statements needed for the column alteration.
+        Each list contains tuples of (SQL, params).
+
+        'model'         The model containing the column that is being modified.
+        'column'        The column name that is being modified.
+        'alteration'    The name of the column alternation that corresponds to
+                        the property with the prefix 'sql_alter_column_'.
+        'values'        The named values that will be provided to the SQL format
+                        string.
+        'fragment'      Indicates whether the caller wants SQL framents and is
+                        capable of combining the framents to execute.
+        'params'        The default params for the SQL format string.
         """
         if alteration is None:
             format_str = self.sql_alter_column
@@ -384,7 +393,7 @@ class BaseDatabaseSchemaEditor(object):
                 'table': self.quote_name(model._meta.db_table),
                 'column': self.quote_name(column),
             }
-        return [(sql, params or [])], [([], [])]
+        return [(sql, params or [])], [(None, [])]
 
 
     def add_field(self, model, field):
@@ -606,16 +615,18 @@ class BaseDatabaseSchemaEditor(object):
                 actions = [(", ".join(sql), reduce(operator.add, params))]
             # Apply those actions
             for sql, params in actions:
-                self.execute(
-                    self.sql_alter_column % {
-                        "table": self.quote_name(model._meta.db_table),
-                        "changes": sql,
-                    },
-                    params,
-                )
+                if sql:
+                    self.execute(
+                        self.sql_alter_column % {
+                            "table": self.quote_name(model._meta.db_table),
+                            "changes": sql,
+                        },
+                        params,
+                    )
         if post_actions:
             for sql, params in post_actions:
-                self.execute(sql, params)
+                if sql:
+                    self.execute(sql, params)
         # Added a unique?
         if not old_field.unique and new_field.unique:
             self.execute(
