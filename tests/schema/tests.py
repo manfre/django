@@ -9,7 +9,7 @@ from django.db.models.fields.related import ManyToManyField, ForeignKey
 from django.db.transaction import atomic
 from .models import (Author, AuthorWithM2M, Book, BookWithLongName,
     BookWithSlug, BookWithM2M, Tag, TagIndexed, TagM2MTest, TagUniqueRename,
-    UniqueTest)
+    UniqueTest, Thing)
 
 
 class SchemaTests(TransactionTestCase):
@@ -26,6 +26,7 @@ class SchemaTests(TransactionTestCase):
     models = [
         Author, AuthorWithM2M, Book, BookWithLongName, BookWithSlug,
         BookWithM2M, Tag, TagIndexed, TagM2MTest, TagUniqueRename, UniqueTest,
+        Thing
     ]
 
     # Utility functions
@@ -36,28 +37,21 @@ class SchemaTests(TransactionTestCase):
 
     def delete_tables(self):
         "Deletes all model tables for our models for a clean test environment"
-        cursor = connection.cursor()
-        connection.disable_constraint_checking()
-        table_names = connection.introspection.table_names(cursor)
-        for model in self.models:
-            # Remove any M2M tables first
-            for field in model._meta.local_many_to_many:
-                with atomic():
-                    tbl = field.rel.through._meta.db_table
-                    if tbl in table_names:
-                        cursor.execute(connection.schema_editor().sql_delete_table % {
-                            "table": connection.ops.quote_name(tbl),
-                        })
-                        table_names.remove(tbl)
-            # Then remove the main tables
+        with connection.cursor() as cursor:
             with atomic():
-                tbl = model._meta.db_table
-                if tbl in table_names:
-                    cursor.execute(connection.schema_editor().sql_delete_table % {
-                        "table": connection.ops.quote_name(tbl),
-                    })
-                    table_names.remove(tbl)
-        connection.enable_constraint_checking()
+                table_names = connection.introspection.table_names(cursor)
+                for model in self.models:
+                    # Remove any M2M tables first
+                    for field in model._meta.local_many_to_many:
+                        tbl = field.rel.through._meta.db_table
+                        if tbl in table_names:
+                            connection.schema_editor().delete_model(field.rel.through)
+                            table_names.remove(tbl)
+                    # Then remove the main tables
+                    tbl = model._meta.db_table
+                    if tbl in table_names:
+                        connection.schema_editor().delete_model(model)
+                        table_names.remove(tbl)
 
     def column_classes(self, model):
         cursor = connection.cursor()
@@ -682,4 +676,25 @@ class SchemaTests(TransactionTestCase):
         self.assertIn(
             column_name,
             connection.introspection.get_indexes(connection.cursor(), BookWithLongName._meta.db_table),
+        )
+
+    def test_creation_deletion_reserved_names(self):
+        """
+        Tries creating a model's table, and then deleting it when it has a
+        bunch of reserved names (tables, fields, ...) and other names that
+        should be quoted by the SQL generation machinery (e.g. containing a
+        hyphen.)
+        """
+        # Create the table
+        with connection.schema_editor() as editor:
+            editor.create_model(Thing)
+        # Check that it's there
+        list(Thing.objects.all())
+        # Clean up that table
+        with connection.schema_editor() as editor:
+            editor.delete_model(Thing)
+        # Check that it's gone
+        self.assertRaises(
+            DatabaseError,
+            lambda: list(Thing.objects.all()),
         )

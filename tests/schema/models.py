@@ -1,5 +1,6 @@
 from django.core.apps.cache import AppCache
 from django.db import models
+from django.utils.encoding import python_2_unicode_compatible
 
 # Because we want to test creation and deletion of these as separate things,
 # these models are all inserted into a separate AppCache so the main test
@@ -102,3 +103,21 @@ class BookWithLongName(models.Model):
 
     class Meta:
         app_cache = new_app_cache
+
+# Copied form tests/reserved_names/models.py
+@python_2_unicode_compatible
+class Thing(models.Model):
+    when = models.CharField(max_length=1, primary_key=True)
+    join = models.CharField(max_length=1)
+    like = models.CharField(max_length=1)
+    drop = models.CharField(max_length=1)
+    alter = models.CharField(max_length=1)
+    having = models.CharField(max_length=1)
+    where = models.DateField(max_length=1)
+    has_hyphen = models.CharField(max_length=1, db_column='has-hyphen')
+
+    class Meta:
+        db_table = 'select'
+
+    def __str__(self):
+        return self.when

@@ -85,6 +85,8 @@ class BaseDatabaseSchemaEditor(object):
         """
         Executes the given SQL statement, with optional parameters.
         """
+        if not sql:
+            return
         # Get the cursor
         cursor = self.connection.cursor()
         # Log the command we're running, then run it
@@ -224,7 +226,7 @@ class BaseDatabaseSchemaEditor(object):
             })
         # Make the table
         sql = self.sql_create_table % {
-            "table": model._meta.db_table,
+            "table": self.quote_name(model._meta.db_table),
             "definition": ", ".join(column_sqls)
         }
         self.execute(sql, params)
@@ -243,7 +245,9 @@ class BaseDatabaseSchemaEditor(object):
 
     def delete_model(self, model):
         """
-        Deletes a model from the database.
+        Deletes a model from the database. If the backend doesn't support
+        CASCADE, it will need to override this method manually delete all
+        incoming FKs.
         """
         # Delete the table
         self.execute(self.sql_delete_table % {
@@ -358,6 +362,31 @@ class BaseDatabaseSchemaEditor(object):
         }
         self.execute(sql)
 
+    def _alter_db_column_sql(self, model, column, alteration=None, values={}, fragment=False, params=None):
+        """
+        Return a tuple containing (sql, params) that represents the SQL to do
+        the requested alteration. When fragment is True, the SQL wil only
+        include the column specific portion of the SQL that can be combined with
+        other column alterations.
+        """
+        if alteration is None:
+            format_str = self.sql_alter_column
+            fragment = None # generic alteration doesn't have a fragment only version
+        else:
+            format_str = getattr(self, 'sql_alter_column_' + alteration)
+        default_values = {
+            'column': self.quote_name(column),
+        }
+        default_values.update(values)
+        sql = format_str % default_values
+        if fragment == False:
+            sql = self.sql_alter_column % {
+                'table': self.quote_name(model._meta.db_table),
+                'column': self.quote_name(column),
+            }
+        return [(sql, params or [])], [([], [])]
+
+
     def add_field(self, model, field):
         """
         Creates a field on a model.
@@ -386,13 +415,13 @@ class BaseDatabaseSchemaEditor(object):
         # Drop the default if we need to
         # (Django usually does not use in-database defaults)
         if field.default is not None:
-            sql = self.sql_alter_column % {
-                "table": self.quote_name(model._meta.db_table),
-                "changes": self.sql_alter_column_no_default % {
-                    "column": self.quote_name(field.column),
-                }
-            }
-            self.execute(sql)
+            actions, post_actions = self._alter_db_column_sql(model, field.column, 'no_default', fragment=False)
+            if actions:
+                for sql, params in actions:
+                    self.execute(sql, params)
+            if post_actions:
+                for sql, params in post_actions:
+                    self.execute(sql, params)
         # Add an index, if required
         if field.db_index and not field.unique:
             self.deferred_sql.append(
@@ -546,47 +575,30 @@ class BaseDatabaseSchemaEditor(object):
         post_actions = []
         # Type change?
         if old_type != new_type:
-            fragment, other_actions = self._alter_column_type_sql(model._meta.db_table, new_field.column, new_type)
-            actions.append(fragment)
-            post_actions.extend(other_actions)
+            type_actions = self._alter_db_column_sql(model, new_field.column, 'type',
+                values={'type': new_type}, fragment=True)
+            actions.extend(type_actions[0])
+            post_actions.extend(type_actions[1])
         # Default change?
         old_default = self.effective_default(old_field)
         new_default = self.effective_default(new_field)
         if old_default != new_default:
             if new_default is None:
-                actions.append((
-                    self.sql_alter_column_no_default % {
-                        "column": self.quote_name(new_field.column),
-                    },
-                    [],
-                ))
+                default_actions = self._alter_db_column_sql(model, new_field.column, 'no_default',
+                    fragment=True)
             else:
                 default_sql, default_params = self.prepare_default(new_default)
-                actions.append((
-                    self.sql_alter_column_default % {
-                        "column": self.quote_name(new_field.column),
-                        "default": default_sql,
-                    },
-                    default_params,
-                ))
+                default_actions = self._alter_db_column_sql(model, new_field.column, 'default',
+                    values={'default': default_sql}, fragment=True, params=default_params)
+            actions.extend(default_actions[0])
+            post_actions.extend(default_actions[1])
         # Nullability change?
         if old_field.null != new_field.null:
-            if new_field.null:
-                actions.append((
-                    self.sql_alter_column_null % {
-                        "column": self.quote_name(new_field.column),
-                        "type": new_type,
-                    },
-                    [],
-                ))
-            else:
-                actions.append((
-                    self.sql_alter_column_not_null % {
-                        "column": self.quote_name(new_field.column),
-                        "type": new_type,
-                    },
-                    [],
-                ))
+            alteration = 'null' if new_field.null else 'not_null'
+            null_actions = self._alter_db_column_sql(model, new_field.column, alteration,
+                values={'type': new_type}, fragment=True)
+            actions.extend(null_actions[0])
+            post_actions.extend(null_actions[1])
         if actions:
             # Combine actions together if we can (e.g. postgres)
             if self.connection.features.supports_combined_alters:
@@ -705,27 +717,6 @@ class BaseDatabaseSchemaEditor(object):
         # Reset connection if required
         if self.connection.features.connection_persists_old_columns:
             self.connection.close()
-
-    def _alter_column_type_sql(self, table, column, type):
-        """
-        Hook to specialise column type alteration for different backends,
-        for cases when a creation type is different to an alteration type
-        (e.g. SERIAL in PostgreSQL, PostGIS fields).
-
-        Should return two things; an SQL fragment of (sql, params) to insert
-        into an ALTER TABLE statement, and a list of extra (sql, params) tuples
-        to run once the field is altered.
-        """
-        return (
-            (
-                self.sql_alter_column_type % {
-                    "column": self.quote_name(column),
-                    "type": type,
-                },
-                [],
-            ),
-            [],
-        )
 
     def _alter_many_to_many(self, model, old_field, new_field, strict):
         """
