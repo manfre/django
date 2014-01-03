@@ -88,14 +88,14 @@ class BaseDatabaseSchemaEditor(object):
         """
         if not sql:
             return
-        # Get the cursor
-        cursor = self.connection.cursor()
         # Log the command we're running, then run it
         logger.debug("%s; (params %r)" % (sql, params))
         if self.collect_sql:
             self.collected_sql.append((sql % tuple(map(self._quote_parameter, params))) + ";")
         else:
-            cursor.execute(sql, params)
+            # Get the cursor
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, params)
 
     def quote_name(self, name):
         return self.connection.ops.quote_name(name)
