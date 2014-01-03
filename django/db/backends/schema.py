@@ -52,6 +52,7 @@ class BaseDatabaseSchemaEditor(object):
     sql_delete_unique = "ALTER TABLE %(table)s DROP CONSTRAINT %(name)s"
 
     sql_create_fk = "ALTER TABLE %(table)s ADD CONSTRAINT %(name)s FOREIGN KEY (%(column)s) REFERENCES %(to_table)s (%(to_column)s) DEFERRABLE INITIALLY DEFERRED"
+    sql_create_fk_inline = ""
     sql_delete_fk = "ALTER TABLE %(table)s DROP CONSTRAINT %(name)s"
 
     sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(column)s)%(extra)s"
@@ -185,11 +186,10 @@ class BaseDatabaseSchemaEditor(object):
             db_params = field.db_parameters(connection=self.connection)
             if db_params['check']:
                 definition += " CHECK (%s)" % db_params['check']
-            # Add the SQL to our big list
-            column_sqls.append("%s %s" % (
-                self.quote_name(field.column),
-                definition,
-            ))
+            # Autoincrement SQL (for backends with inline variant)
+            col_type_suffix = field.db_type_suffix(connection=self.connection)
+            if col_type_suffix:
+                definition += " %s" % col_type_suffix
             params.extend(extra_params)
             # Indexes
             if field.db_index and not field.unique:
@@ -202,22 +202,36 @@ class BaseDatabaseSchemaEditor(object):
                     },
                 ))
             # FK
-            if field.rel and self.connection.features.supports_foreign_keys:
+            if field.rel:
                 to_table = field.rel.to._meta.db_table
                 to_column = field.rel.to._meta.get_field(field.rel.field_name).column
-                self.deferred_sql.append(self._create_db_constraint_sql(
+
+                constraint_type = 'fk' if self.connection.features.supports_foreign_keys else 'inline_fk'
+
+                constraint_sql, constraint_params = self._create_db_constraint_sql(
                     model,
                     field.column,
-                    constraint_type='fk',
+                    constraint_type=constraint_type,
                     values={
-                        'name': self._create_constraint_name(model, field.column, constraint_type='fk',
+                        'name': self._create_constraint_name(model, field.column, constraint_type=constraint_type,
                             suffix="_%s_%s" % (to_table, to_column)),
                         'field': field,
                         'to_table': self.quote_name(to_table),
                         'to_column': self.quote_name(to_column),
                     },
-                ))
-            # Autoincrement SQL
+                )
+
+                if constraint_type == 'fk':
+                    self.deferred_sql.append((constraint_sql, constraint_params))
+                elif constraint_sql:
+                    definition += ' ' + constraint_sql
+                    params.extend(constraint_params)
+            # Add the SQL to our big list
+            column_sqls.append("%s %s" % (
+                self.quote_name(field.column),
+                definition,
+            ))
+            # Autoincrement SQL (for backends with post table definition variant)
             if field.get_internal_type() == "AutoField":
                 autoinc_sql = self.connection.ops.autoinc_sql(model._meta.db_table, field.column)
                 if autoinc_sql:
