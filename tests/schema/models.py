@@ -117,6 +117,7 @@ class Thing(models.Model):
     has_hyphen = models.CharField(max_length=1, db_column='has-hyphen')
 
     class Meta:
+        app_cache = new_app_cache
         db_table = 'select'
 
     def __str__(self):
