@@ -678,6 +678,7 @@ class SQLCompiler(object):
         resolve_columns = hasattr(self, 'resolve_columns')
         fields = None
         has_aggregate_select = bool(self.query.aggregate_select)
+
         for rows in self.execute_sql(MULTI):
             for row in rows:
                 if has_aggregate_select:
@@ -762,24 +763,34 @@ class SQLCompiler(object):
         cursor.execute(sql, params)
 
         if not result_type:
+            # Caller didn't specify a result_type, so just give them back the
+            # cursor to process (and close).
             return cursor
         if result_type == SINGLE:
-            if self.ordering_aliases:
-                return cursor.fetchone()[:-len(self.ordering_aliases)]
-            return cursor.fetchone()
+            try:
+                if self.ordering_aliases:
+                    return cursor.fetchone()[:-len(self.ordering_aliases)]
+                return cursor.fetchone()
+            finally:
+                # done with the cursor
+                cursor.close()
 
         # The MULTI case.
         if self.ordering_aliases:
             result = order_modified_iter(cursor, len(self.ordering_aliases),
                     self.connection.features.empty_fetchmany_value)
         else:
-            result = iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
-                    self.connection.features.empty_fetchmany_value)
+            result = cursor_iter(cursor,
+                self.connection.features.empty_fetchmany_value)
         if not self.connection.features.can_use_chunked_reads:
-            # If we are using non-chunked reads, we return the same data
-            # structure as normally, but ensure it is all read into memory
-            # before going any further.
-            return list(result)
+            try:
+                # If we are using non-chunked reads, we return the same data
+                # structure as normally, but ensure it is all read into memory
+                # before going any further.
+                return list(result)
+            finally:
+                # done with the cursor
+                cursor.close()
         return result
 
     def as_subquery_condition(self, alias, columns, qn):
@@ -956,12 +967,15 @@ class SQLUpdateCompiler(SQLCompiler):
         related queries are not available.
         """
         cursor = super(SQLUpdateCompiler, self).execute_sql(result_type)
-        rows = cursor.rowcount if cursor else 0
-        is_empty = cursor is None
-        del cursor
+        try:
+            rows = cursor.rowcount if cursor else 0
+            is_empty = cursor is None
+        finally:
+            if cursor:
+                cursor.close()
         for query in self.query.get_related_updates():
             aux_rows = query.get_compiler(self.using).execute_sql(result_type)
-            if is_empty:
+            if is_empty and aux_rows:
                 rows = aux_rows
                 is_empty = False
         return rows
@@ -1096,6 +1110,17 @@ class SQLDateTimeCompiler(SQLCompiler):
                     datetime = timezone.make_aware(datetime, self.query.tzinfo)
                 yield datetime
 
+def cursor_iter(cursor, sentinel):
+    """
+    Yields blocks of rows from a cursor and ensures the cursor is closed when
+    done.
+    """
+    try:
+        for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
+                sentinel):
+            yield rows
+    finally:
+        cursor.close()
 
 def order_modified_iter(cursor, trim, sentinel):
     """
@@ -1104,6 +1129,9 @@ def order_modified_iter(cursor, trim, sentinel):
     requirements. We must trim those extra columns before anything else can use
     the results, since they're only needed to make the SQL valid.
     """
-    for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
-            sentinel):
-        yield [r[:-trim] for r in rows]
+    try:
+        for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
+                sentinel):
+            yield [r[:-trim] for r in rows]
+    finally:
+        cursor.close()
